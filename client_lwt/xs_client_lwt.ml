@@ -296,7 +296,7 @@ module Client = functor(IO: IO with type 'a t = 'a Lwt.t) -> struct
   let restrict h domid = rpc "restrict" h (Request.Restrict domid) Unmarshal.ok
   let getdomainpath h domid = rpc "getdomainpath" h (Request.Getdomainpath domid) Unmarshal.string
   let watch h path token = rpc "watch" (Xs_handle.watch h path) (Request.Watch(path, Token.to_string token)) Unmarshal.ok
-  let unwatch h path token = rpc "unwatch" (Xs_handle.watch h path) (Request.Unwatch(path, Token.to_string token)) Unmarshal.ok
+  let unwatch h path token = rpc "unwatch" (Xs_handle.unwatch h path) (Request.Unwatch(path, Token.to_string token)) Unmarshal.ok
   let introduce h domid store_mfn store_port = rpc "introduce" h (Request.Introduce(domid, store_mfn, store_port)) Unmarshal.ok
   let set_target h stubdom_domid domid = rpc "set_target" h (Request.Set_target(stubdom_domid, domid)) Unmarshal.ok
   let immediate client f = f (Xs_handle.no_transaction client)
@@ -345,20 +345,22 @@ module Client = functor(IO: IO with type 'a t = 'a Lwt.t) -> struct
           lwt result = f h in
           wakeup wakener result;
           return true
-        with Eagain ->
-          return false in
+        with
+        | Eagain -> return false
+        | ex -> wakeup_exn wakener ex; return true in
       if finished
       then return ()
       else adjust_paths () >> loop ()
     in
-    let (_: unit Lwt.t) =
+    Lwt.async (fun () ->
       try_lwt
         loop ()
       finally
         let current_paths = Xs_handle.get_watched_paths h in
         lwt () = Lwt_list.iter_s (fun p -> unwatch h p token) (elements current_paths) in
         Hashtbl.remove client.watchevents token;
-        return () in
+        return ()
+    );
     result
 
   let rec transaction client f =
